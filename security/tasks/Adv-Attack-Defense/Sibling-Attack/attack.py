@@ -1,15 +1,14 @@
 import os
 import time
 import torch
-import torch.nn.functional as F
 import models.models as m
 
-from utils.utils import *
+from utils.utils import cos_simi, load_img, save_adv_img, obtain_attacker_victim
 from omegaconf import OmegaConf
 
 
 def load_surrogate_model():
-    """ Load white-box and black-box models
+    """Load white-box and black-box models
 
     :return:
         face recognition and attribute recognition models
@@ -17,35 +16,43 @@ def load_surrogate_model():
 
     # Load pretrain white-box FR surrogate model
     fr_model = m.IR_152((112, 112))
-    fr_model.load_state_dict(torch.load('./models/ir152.pth'))
+    fr_model.load_state_dict(torch.load("./models/ir152.pth"))
     fr_model.to(device)
     fr_model.eval()
 
     # Load pretrain white-box AR surrogate model
     ar_model = m.IR_152_attr_all()
-    ar_model.load_state_dict(torch.load('./models/ir152_ar.pth'))
+    ar_model.load_state_dict(torch.load("./models/ir152_ar.pth"))
     ar_model.to(device)
     ar_model.eval()
 
     return fr_model, ar_model
 
-'''
+
+"""
     Obtain intermediate features by hooker
-'''
+"""
 layer_name = "ir_152.body.49"
 activation = {}
+
+
 def get_activation(name):
     def hook(model, input, output):
         activation[name] = output
+
     return hook
 
+
 gouts = []
+
+
 def backward_hook(module, gin, gout):
     gouts.append(gout[0].data)
     return gin
 
+
 def infer_fr_model(attack_img, victim_img, fr_model):
-    """ Face recognition inference
+    """Face recognition inference
 
     :param attack_img:
             attacker face image
@@ -60,8 +67,9 @@ def infer_fr_model(attack_img, victim_img, fr_model):
     victim_img_feat = fr_model(victim_img)
     return attack_img_feat, victim_img_feat
 
+
 def infer_ar_model(attack_img, victim_img, ar_model):
-    """ Face attribute recognition inference
+    """Face attribute recognition inference
 
     Args:
         :param attack_img:
@@ -89,7 +97,7 @@ def infer_ar_model(attack_img, victim_img, ar_model):
 
 
 def sibling_attack(attack_img, victim_img, fr_model, ar_model, config):
-    """ Perform Sibling-Attack
+    """Perform Sibling-Attack
 
     Args:
         :param attack_img:
@@ -106,11 +114,11 @@ def sibling_attack(attack_img, victim_img, fr_model, ar_model, config):
     :return:
         adversarial face image
     """
-    epochs = config.attack['outer_loops']
-    alpha = config.attack['alpha']
-    eps = config.attack['eps']
-    INNER_MAX_EPOCH = config.attack['inner_loops']
-    magic = config.attack['gamma']
+    epochs = config.attack["outer_loops"]
+    alpha = config.attack["alpha"]
+    eps = config.attack["eps"]
+    INNER_MAX_EPOCH = config.attack["inner_loops"]
+    magic = config.attack["gamma"]
 
     for layer in list(ar_model.named_modules()):
         if layer[0] == layer_name:
@@ -118,7 +126,7 @@ def sibling_attack(attack_img, victim_img, fr_model, ar_model, config):
             bw_hook = layer[1].register_backward_hook(backward_hook)
 
     ori_attack_img = attack_img.clone()
-    for i in range(1, epochs+1):
+    for i in range(1, epochs + 1):
         pre = time.time()
         if i % 2 == 0:
             INNER_LR = 1.0 / 255.0 * magic
@@ -244,11 +252,11 @@ def sibling_attack(attack_img, victim_img, fr_model, ar_model, config):
     return attack_img
 
 
-if __name__ == '__main__':
-    config = OmegaConf.load('./configs/config.yaml')
-    gpu = config.attack['gpu']
-    dataset_name = config.dataset['dataset_name']
-    device = torch.device('cuda:' + str(gpu))
+if __name__ == "__main__":
+    config = OmegaConf.load("./configs/config.yaml")
+    gpu = config.attack["gpu"]
+    dataset_name = config.dataset["dataset_name"]
+    device = torch.device("cuda:" + str(gpu))
 
     fr_model, ar_model = load_surrogate_model()
     attack_img_paths, victim_img_paths = obtain_attacker_victim(config)
@@ -262,12 +270,16 @@ if __name__ == '__main__':
 
             # Perform Sibling-Attack
             adv_attack_img = sibling_attack(attack_img, victim_img, fr_model, ar_model, config)
-            
-            save_dir = './' + dataset_name +  '_results_adv_images/'
+
+            save_dir = "./" + dataset_name + "_results_adv_images/"
             if not os.path.exists(save_dir):
                 os.mkdir(save_dir)
-            save_path = save_dir + victim_img_path.split('/')[-1].split('.')[0] + '+' +\
-                        attack_img_path.split('/')[-1].split('.')[0] + '.png'
+            save_path = (
+                save_dir
+                + victim_img_path.split("/")[-1].split(".")[0]
+                + "+"
+                + attack_img_path.split("/")[-1].split(".")[0]
+                + ".png"
+            )
             save_adv_img(adv_attack_img.cpu(), save_path, config)
             print("Save adversarial image to - ", save_path)
-
